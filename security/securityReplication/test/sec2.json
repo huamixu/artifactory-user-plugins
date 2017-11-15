@@ -7,7 +7,7 @@
             "permissions": {
                 "changeme": "nrw"
             },
-            "realm": "artifactory",
+            "realm": "internal",
             "realmattrs": null
         },
         "changeme": {
@@ -29,7 +29,7 @@
                 "Anything": "r",
                 "changeme": "dmnrw"
             },
-            "realm": "artifactory",
+            "realm": "internal",
             "realmattrs": null
         }
     },
@@ -94,7 +94,7 @@
             ],
             "locked": false,
             "passkey": null,
-            "password": "12c2a2afff2ae64ef35c281a11264821",
+            "password": "bcrypt$$2a$08$Lji9jdZMHNnG2ZTG4UbnnudTk3N1/p.p1xD0ftBsRhAfUIgkks49C",
             "permissions": {
                 "changeme": "dnrw"
             },
@@ -103,7 +103,7 @@
                 
             },
             "publickey": null,
-            "salt": "CAFEBABEEBABEFAC",
+            "salt": null,
             "updatable": true
         },
         "admin": {
@@ -117,7 +117,7 @@
             ],
             "locked": false,
             "passkey": null,
-            "password": "1f70548d73baca61aab8660733c7de81",
+            "password": "bcrypt$$2a$08$evbpoO.n.B0r5UICCbaV9uWR0LRwHHinbXW/BRyYTkS02EctY4t0O",
             "permissions": {
                 
             },
@@ -126,7 +126,7 @@
                 
             },
             "publickey": null,
-            "salt": "CAFEBABEEBABEFAC",
+            "salt": null,
             "updatable": true
         },
         "anonymous": {
@@ -140,7 +140,7 @@
             ],
             "locked": false,
             "passkey": null,
-            "password": "d41d8cd98f00b204e9800998ecf8427e",
+            "password": "bcrypt$$2a$08$paWfyuaWcUIQImCKbognSunZbLpHwRb0TtNWiwNxXTa/eUxCF2tU.",
             "permissions": {
                 "Any Remote": "rw",
                 "Anything": "r",
@@ -158,7 +158,7 @@
             "admin": true,
             "bintray": null,
             "email": "changed@foo.bar",
-            "enabled": false,
+            "enabled": true,
             "expired": true,
             "groups": [
                 "addme",
@@ -166,7 +166,7 @@
             ],
             "locked": true,
             "passkey": null,
-            "password": "bb9d9871ba35be1c551f832573ec8cec",
+            "password": "bcrypt$$2a$08$I7Q7pDX5pDpZhuHaZk/4CO7VJqxOexsDQfemsFxlsEwvmzaLSjQd6",
             "permissions": {
                 "addme": "nrw",
                 "changeme": "nrw"
@@ -176,7 +176,7 @@
                 "sshPublicKey": "ssh-rsa foobar"
             },
             "publickey": null,
-            "salt": "CAFEBABEEBABEFAC",
+            "salt": null,
             "updatable": false
         }
     }

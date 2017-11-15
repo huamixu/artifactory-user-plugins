@@ -205,6 +205,11 @@ jobs {
             return
         }
         log.debug("MASTER: Available instances are: $upList")
+        def ver = ctx.centralConfig.versionInfo
+        if (incompatibleVersions(ver, upList.values(), 5, 6)) {
+            log.debug("MASTER: Cannot continue, some instances are incompatible versions")
+            return
+        }
         log.debug("MASTER: Let's do some updates")
         log.debug("MASTER: Getting the golden file")
         def golden = findBestGolden(upList, whoami, auth)
@@ -238,6 +243,29 @@ def writeFile(fname, content) {
         def t = System.currentTimeMillis()
         cfgserv.addOrUpdateConfig("plugin.securityreplication.$fname", data, t)
     }
+}
+
+def incompatibleVersions(ver, upList, maj, min) {
+    def isnew = compareVersions(['version': [ver.version]], maj, min) >= 0
+    for (inst in upList) {
+        log.error("##### $inst $isnew $ver.version")
+        if (inst == null) return true
+        log.error("##### inst is not null")
+        if (!('version' in inst)) return true
+        log.error("##### inst has version")
+        if (inst.version == null) continue
+        log.error("##### version is not null")
+        if ((compareVersions(inst, maj, min) >= 0) != isnew) return true
+        log.error("##### versions are compatible")
+    }
+    return false
+}
+
+def compareVersions(fingerprint, major, minor) {
+    def vers = fingerprint.version[0].split('\\.')
+    def maj = vers[0] as int
+    def min = vers[1] as int
+    return (maj != major) ? (maj <=> major) : (min <=> minor)
 }
 
 def remoteCall(whoami, baseurl, auth, method, data = wrapData('jo', null)) {
@@ -336,7 +364,7 @@ def findBestGolden(upList, whoami, auth) {
     if (synched) return [fingerprint: upList[whoami], golden: baseSnapShot]
     def latest = null, golden = null
     for (inst in upList.entrySet()) {
-        if (!inst.value) continue
+        if (!inst.value || !('ts' in inst.value)) continue
         if (!latest || latest.value.ts < inst.value.ts) latest = inst
     }
     if (!latest) return [fingerprint: null, golden: baseSnapShot]
@@ -351,6 +379,8 @@ def findBestGolden(upList, whoami, auth) {
 
 def sendSlavesGoldenCopy(upList, whoami, auth, mergedPatch, golden) {
     def fingerprint = [cs: null, ts: System.currentTimeMillis()]
+    def ver = ctx.centralConfig.versionInfo
+    fingerprint.version = [ver.version, ver.revision]
     if (golden.fingerprint && fingerprint.ts <= golden.fingerprint.ts) {
         fingerprint.ts = 1 + golden.fingerprint.ts
     }
@@ -366,7 +396,7 @@ def sendSlavesGoldenCopy(upList, whoami, auth, mergedPatch, golden) {
             log.debug("MASTER: Sent Data, Slave responds: $newfinger")
         }
         if (fingerprint.cs == null) fingerprint.cs = newfinger.cs
-        if (fingerprint != newfinger) {
+        if (fingerprint.cs != newfinger.cs || fingerprint.ts != newfinger.ts) {
             log.error("MASTER: Response from $instance indicates bad sync (fingerprint mismatch)")
         }
     }
@@ -397,7 +427,7 @@ def checkInstances(distList, whoami, auth) {
             try {
                 upList[instance] = unwrapData('jo', resp[0])
             } catch (Exception ex) {
-                upList[instance] = null
+                upList[instance] = ['version': null]
             }
         }
     }
@@ -415,9 +445,12 @@ def grabStuffFromSlaves(golden, upList, whoami, auth) {
         log.debug("MASTER: Accessing $inst.key, give me your stuff")
         def resp = null
         def data = wrapData('jo', golden)
-        if (golden.fingerprint && golden.fingerprint.cs == inst.value?.cs) {
+        if (golden.fingerprint?.cs && golden.fingerprint.cs == inst.value?.cs) {
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve')
         } else {
+            if (golden.fingerprint == null) golden.fingerprint = [:]
+            def ver = ctx.centralConfig.versionInfo
+            golden.fingerprint.version = [ver.version, ver.revision]
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve', data)
         }
         if (resp[1] != 200) {
@@ -509,8 +542,9 @@ def getPingAndFingerprint() {
     def is = null
     try {
         is = readFile('fingerprint')
+        def ver = ctx.centralConfig.versionInfo
         if (is) return [wrapData('js', unwrapData('js', is)), 200]
-        else return [wrapData('jo', null), 200]
+        else return [wrapData('jo', ['version': [ver.version, ver.revision]]), 200]
     } finally {
         if (is) unwrapData('ji', is).close()
     }
@@ -534,11 +568,18 @@ def getRecentPatch(newgolden) {
             if (is) unwrapData('ji', is).close()
         }
     } else {
+        def ver = ctx.centralConfig.versionInfo
+        if (incompatibleVersions(ver, [newgoldenuw.fingerprint], 5, 6)) {
+            def msg = "Cannot merge golden, incompatible version."
+            log.error(msg)
+            return [wrapData('js', msg), 400]
+        }
         def goldendiff = buildDiff(baseSnapShot, goldenDB)
         def extractdiff = buildDiff(baseSnapShot, extracted)
         def mergeddiff = merge([goldendiff, extractdiff])
         extracted = applyDiff(baseSnapShot, mergeddiff)
         updateDatabase(null, extracted)
+        newgoldenuw.fingerprint.version = [ver.version, ver.revision]
         writeFile('fingerprint', wrapData('jo', newgoldenuw.fingerprint))
         writeFile('golden', wrapData('jo', goldenDB))
     }
@@ -560,6 +601,12 @@ def getRecentPatch(newgolden) {
 def applyAggregatePatch(newpatch) {
     def goldenDB = null, oldGoldenDB = null
     def patch = unwrapData('jo', newpatch)
+    def ver = ctx.centralConfig.versionInfo
+    if (incompatibleVersions(ver, [patch.fingerprint], 5, 6)) {
+        def msg = "Cannot update, incompatible version."
+        log.error(msg)
+        return [wrapData('js', msg), 400]
+    }
     if (verbose == true) {
         log.debug("SLAVE: newpatch: $patch")
     }
@@ -582,6 +629,7 @@ def applyAggregatePatch(newpatch) {
         log.debug("SLAVE: new slave Golden is $goldenDB")
     }
     patch.fingerprint.cs = getHash(goldenDB)
+    patch.fingerprint.version = [ver.version, ver.revision]
     writeFile('fingerprint', wrapData('jo', patch.fingerprint))
     writeFile('golden', wrapData('jo', goldenDB))
     is = null
@@ -898,8 +946,14 @@ def extract() {
     }
     // users
     if (filter >= 1) {
-        def users = [:], usrs = secserv.getAllUsers(true)
+        def users = [:], usrs = null
+        try {
+            usrs = secserv.getAllUsers(true, true)
+        } catch (MissingMethodException ex) {
+            usrs = secserv.getAllUsers(true)
+        }
         for (usr in usrs) {
+            if (usr.username == 'access-admin') continue
             def user = [:]
             user.password = usr.password
             user.salt = usr.salt
@@ -997,6 +1051,7 @@ def update(ptch) {
                    path[0] in ['users', 'groups'] && path[2] == 'permissions') {
             // aces
             def isgroup = path[0] == 'groups'
+            if (!isgroup && path[1] == 'access-admin') continue
             def principal = oper == ':~' ? path[3] : key
             def acl = infact.copyAcl(secserv.getAcl(principal))
             def aces = acl.aces
@@ -1023,6 +1078,7 @@ def update(ptch) {
                    path[0] in ['users', 'groups', 'permissions']) {
             // users, groups, and permissions
             if (oper == ';+' && path[0] == 'users') {
+                if (key == 'access-admin') continue
                 def user = infact.createUser()
                 user.username = key
                 user.password = new SaltedPassword(val.password, val.salt)
@@ -1051,6 +1107,7 @@ def update(ptch) {
                     secserv.updateAcl(acl)
                 }
             } else if (oper == ';-' && path[0] == 'users') {
+                if (key == 'access-admin') continue
                 secserv.deleteUser(key)
             } else if (oper == ';+' && path[0] == 'groups') {
                 def group = infact.createGroup()
@@ -1089,6 +1146,7 @@ def update(ptch) {
         } else if ((pathsize == 3 && oper in [';+', ';-'] ||
                     pathsize == 4 && oper == ':~') &&
                    path[0] == 'users' && path[2] == 'properties') {
+            if (path[1] == 'access-admin') continue
             // user properties, including API keys
             if (oper == ';+') {
                 modifyProp(secserv, 'create', path[1], key, val)
@@ -1099,6 +1157,7 @@ def update(ptch) {
             }
         } else if (pathsize == 3 && oper in [':+', ':-'] &&
                    path[0] == 'users' && path[2] == 'groups') {
+            if (path[1] == 'access-admin') continue
             // user/group memberships
             if (oper == ':+') {
                 secserv.addUsersToGroup(key, [path[1]])
@@ -1106,6 +1165,7 @@ def update(ptch) {
                 secserv.removeUsersFromGroup(key, [path[1]])
             }
         } else if (pathsize == 3 && oper == ':~' && path[0] == 'users') {
+            if (path[1] == 'access-admin') continue
             // simple user attributes (email, is admin, etc)
             def user = infact.copyUser(secserv.findUser(path[1]))
             if (path[2] == 'password') {
