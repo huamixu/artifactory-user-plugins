@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+// v1.1
+
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
 import groovy.json.JsonSlurper
@@ -248,15 +250,10 @@ def writeFile(fname, content) {
 def incompatibleVersions(ver, upList, maj, min) {
     def isnew = compareVersions(['version': [ver.version]], maj, min) >= 0
     for (inst in upList) {
-        log.error("##### $inst $isnew $ver.version")
         if (inst == null) return true
-        log.error("##### inst is not null")
         if (!('version' in inst)) return true
-        log.error("##### inst has version")
         if (inst.version == null) continue
-        log.error("##### version is not null")
         if ((compareVersions(inst, maj, min) >= 0) != isnew) return true
-        log.error("##### versions are compatible")
     }
     return false
 }
