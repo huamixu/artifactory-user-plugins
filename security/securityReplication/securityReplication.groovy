@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1
+// v1.1.1
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -212,6 +212,7 @@ jobs {
             log.debug("MASTER: Cannot continue, some instances are incompatible versions")
             return
         }
+        upList = simplifyFingerprints(upList)
         log.debug("MASTER: Let's do some updates")
         log.debug("MASTER: Getting the golden file")
         def golden = findBestGolden(upList, whoami, auth)
@@ -250,9 +251,7 @@ def writeFile(fname, content) {
 def incompatibleVersions(ver, upList, maj, min) {
     def isnew = compareVersions(['version': [ver.version]], maj, min) >= 0
     for (inst in upList) {
-        if (inst == null) return true
-        if (!('version' in inst)) return true
-        if (inst.version == null) continue
+        if (inst?.version == null) return true
         if ((compareVersions(inst, maj, min) >= 0) != isnew) return true
     }
     return false
@@ -263,6 +262,12 @@ def compareVersions(fingerprint, major, minor) {
     def maj = vers[0] as int
     def min = vers[1] as int
     return (maj != major) ? (maj <=> major) : (min <=> minor)
+}
+
+def simplifyFingerprints(upList) {
+    return upList.collectEntries { k, v ->
+        [k, (v?.cs && v?.ts) ? ['cs': v.cs, 'ts': v.ts] : null]
+    }
 }
 
 def remoteCall(whoami, baseurl, auth, method, data = wrapData('jo', null)) {
@@ -361,7 +366,7 @@ def findBestGolden(upList, whoami, auth) {
     if (synched) return [fingerprint: upList[whoami], golden: baseSnapShot]
     def latest = null, golden = null
     for (inst in upList.entrySet()) {
-        if (!inst.value || !('ts' in inst.value)) continue
+        if (!inst.value) continue
         if (!latest || latest.value.ts < inst.value.ts) latest = inst
     }
     if (!latest) return [fingerprint: null, golden: baseSnapShot]
@@ -393,7 +398,7 @@ def sendSlavesGoldenCopy(upList, whoami, auth, mergedPatch, golden) {
             log.debug("MASTER: Sent Data, Slave responds: $newfinger")
         }
         if (fingerprint.cs == null) fingerprint.cs = newfinger.cs
-        if (fingerprint.cs != newfinger.cs || fingerprint.ts != newfinger.ts) {
+        if (fingerprint != newfinger) {
             log.error("MASTER: Response from $instance indicates bad sync (fingerprint mismatch)")
         }
     }
@@ -422,7 +427,9 @@ def checkInstances(distList, whoami, auth) {
                 master = true
             }
             try {
-                upList[instance] = unwrapData('jo', resp[0])
+                def data = unwrapData('jo', resp[0])
+                if (data == null) upList[instance] = ['version': null]
+                else upList[instance] = data
             } catch (Exception ex) {
                 upList[instance] = ['version': null]
             }
@@ -442,7 +449,7 @@ def grabStuffFromSlaves(golden, upList, whoami, auth) {
         log.debug("MASTER: Accessing $inst.key, give me your stuff")
         def resp = null
         def data = wrapData('jo', golden)
-        if (golden.fingerprint?.cs && golden.fingerprint.cs == inst.value?.cs) {
+        if (golden.fingerprint && golden.fingerprint.cs == inst.value?.cs) {
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve')
         } else {
             if (golden.fingerprint == null) golden.fingerprint = [:]
