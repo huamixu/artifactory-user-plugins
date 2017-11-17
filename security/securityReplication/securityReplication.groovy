@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.1
+// v1.1.2
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -443,11 +443,12 @@ def checkInstances(distList, whoami, auth) {
     return upList
 }
 
-def grabStuffFromSlaves(golden, upList, whoami, auth) {
+def grabStuffFromSlaves(mygolden, upList, whoami, auth) {
     def bigDiff = []
     for (inst in upList.entrySet()) {
         log.debug("MASTER: Accessing $inst.key, give me your stuff")
         def resp = null
+        def golden = mygolden.collectEntries { k, v -> [k, v] }
         def data = wrapData('jo', golden)
         if (golden.fingerprint && golden.fingerprint.cs == inst.value?.cs) {
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve')
