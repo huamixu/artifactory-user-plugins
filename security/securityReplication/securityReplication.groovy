@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.2
+// v1.1.3
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -547,9 +547,10 @@ def getPingAndFingerprint() {
     def is = null
     try {
         is = readFile('fingerprint')
+        def fingerprint = is ? unwrapData('jo', is) : [:]
         def ver = ctx.centralConfig.versionInfo
-        if (is) return [wrapData('js', unwrapData('js', is)), 200]
-        else return [wrapData('jo', ['version': [ver.version, ver.revision]]), 200]
+        fingerprint.version = [ver.version, ver.revision]
+        return [wrapData('jo', fingerprint), 200]
     } finally {
         if (is) unwrapData('ji', is).close()
     }
