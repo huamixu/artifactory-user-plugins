@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.3
+// v1.1.4
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -26,6 +26,7 @@ import org.apache.http.client.methods.*
 import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClients
 
+import org.artifactory.api.config.VersionInfo
 import org.artifactory.common.ArtifactoryHome
 import org.artifactory.factory.InfoFactoryHolder
 import org.artifactory.request.RequestThreadLocal
@@ -207,7 +208,7 @@ jobs {
             return
         }
         log.debug("MASTER: Available instances are: $upList")
-        def ver = ctx.centralConfig.versionInfo
+        def ver = getArtifactoryVersion()
         if (incompatibleVersions(ver, upList.values(), 5, 6)) {
             log.debug("MASTER: Cannot continue, some instances are incompatible versions")
             return
@@ -268,6 +269,27 @@ def simplifyFingerprints(upList) {
     return upList.collectEntries { k, v ->
         [k, (v?.cs && v?.ts) ? ['cs': v.cs, 'ts': v.ts] : null]
     }
+}
+
+def getArtifactoryVersion() {
+    if (!ArtifactoryHome.get().isHaConfigured()) {
+        return ctx.centralConfig.versionInfo
+    }
+    def cver = null, crev, cmaj = null, cmin = null
+    def sserv = ctx.beanForType(ArtifactoryServersCommonService)
+    for (serv in sserv.allArtifactoryServers) {
+        def ver = serv.artifactoryVersion
+        def vers = ver.split('\\.')
+        def maj = vers[0] as int
+        def min = vers[1] as int
+        if (cver == null || cmaj > maj || (cmaj == maj && cmin > min)) {
+            cver = ver
+            crev = serv.artifactoryRevision
+            cmaj = maj
+            cmin = min
+        }
+    }
+    return new VersionInfo(cver, "$crev")
 }
 
 def remoteCall(whoami, baseurl, auth, method, data = wrapData('jo', null)) {
@@ -381,7 +403,7 @@ def findBestGolden(upList, whoami, auth) {
 
 def sendSlavesGoldenCopy(upList, whoami, auth, mergedPatch, golden) {
     def fingerprint = [cs: null, ts: System.currentTimeMillis()]
-    def ver = ctx.centralConfig.versionInfo
+    def ver = getArtifactoryVersion()
     fingerprint.version = [ver.version, ver.revision]
     if (golden.fingerprint && fingerprint.ts <= golden.fingerprint.ts) {
         fingerprint.ts = 1 + golden.fingerprint.ts
@@ -454,7 +476,7 @@ def grabStuffFromSlaves(mygolden, upList, whoami, auth) {
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve')
         } else {
             if (golden.fingerprint == null) golden.fingerprint = [:]
-            def ver = ctx.centralConfig.versionInfo
+            def ver = getArtifactoryVersion()
             golden.fingerprint.version = [ver.version, ver.revision]
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve', data)
         }
@@ -548,7 +570,7 @@ def getPingAndFingerprint() {
     try {
         is = readFile('fingerprint')
         def fingerprint = is ? unwrapData('jo', is) : [:]
-        def ver = ctx.centralConfig.versionInfo
+        def ver = getArtifactoryVersion()
         fingerprint.version = [ver.version, ver.revision]
         return [wrapData('jo', fingerprint), 200]
     } finally {
@@ -574,7 +596,7 @@ def getRecentPatch(newgolden) {
             if (is) unwrapData('ji', is).close()
         }
     } else {
-        def ver = ctx.centralConfig.versionInfo
+        def ver = getArtifactoryVersion()
         if (incompatibleVersions(ver, [newgoldenuw.fingerprint], 5, 6)) {
             def msg = "Cannot merge golden, incompatible version."
             log.error(msg)
@@ -607,7 +629,7 @@ def getRecentPatch(newgolden) {
 def applyAggregatePatch(newpatch) {
     def goldenDB = null, oldGoldenDB = null
     def patch = unwrapData('jo', newpatch)
-    def ver = ctx.centralConfig.versionInfo
+    def ver = getArtifactoryVersion()
     if (incompatibleVersions(ver, [patch.fingerprint], 5, 6)) {
         def msg = "Cannot update, incompatible version."
         log.error(msg)
