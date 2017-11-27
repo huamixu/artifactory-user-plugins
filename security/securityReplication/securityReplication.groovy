@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.5
+// v1.1.6
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
