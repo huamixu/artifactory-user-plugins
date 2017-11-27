@@ -251,6 +251,9 @@ def writeFile(fname, content) {
 
 def incompatibleVersions(ver, upList, maj, min) {
     def isnew = compareVersions(ver[0], maj, min) >= 0
+    for (v in ver) {
+        if ((compareVersions(v, maj, min) >= 0) != isnew) return true
+    }
     for (inst in upList) {
         if (!inst?.version) return true
         for (vers in inst.version) {
@@ -643,6 +646,7 @@ def applyAggregatePatch(newpatch) {
         log.debug("SLAVE: new slave Golden is $goldenDB")
     }
     patch.fingerprint.cs = getHash(goldenDB)
+    def masterver = patch.fingerprint.version
     patch.fingerprint.version = ver
     writeFile('fingerprint', wrapData('jo', patch.fingerprint))
     writeFile('golden', wrapData('jo', goldenDB))
@@ -658,6 +662,7 @@ def applyAggregatePatch(newpatch) {
     } finally {
         if (is) unwrapData('ji', is).close()
     }
+    patch.fingerprint.version = masterver
     return [wrapData('jo', patch.fingerprint), 200]
 }
 
