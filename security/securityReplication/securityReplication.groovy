@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.4
+// v1.1.5
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -250,16 +250,18 @@ def writeFile(fname, content) {
 }
 
 def incompatibleVersions(ver, upList, maj, min) {
-    def isnew = compareVersions(['version': [ver.version]], maj, min) >= 0
+    def isnew = compareVersions(ver[0], maj, min) >= 0
     for (inst in upList) {
-        if (inst?.version == null) return true
-        if ((compareVersions(inst, maj, min) >= 0) != isnew) return true
+        if (!inst?.version) return true
+        for (vers in inst.version) {
+            if ((compareVersions(vers, maj, min) >= 0) != isnew) return true
+        }
     }
     return false
 }
 
-def compareVersions(fingerprint, major, minor) {
-    def vers = fingerprint.version[0].split('\\.')
+def compareVersions(version, major, minor) {
+    def vers = version.split('\\.')
     def maj = vers[0] as int
     def min = vers[1] as int
     return (maj != major) ? (maj <=> major) : (min <=> minor)
@@ -273,23 +275,10 @@ def simplifyFingerprints(upList) {
 
 def getArtifactoryVersion() {
     if (!ArtifactoryHome.get().isHaConfigured()) {
-        return ctx.centralConfig.versionInfo
+        return [ctx.centralConfig.versionInfo.version]
     }
-    def cver = null, crev, cmaj = null, cmin = null
     def sserv = ctx.beanForType(ArtifactoryServersCommonService)
-    for (serv in sserv.allArtifactoryServers) {
-        def ver = serv.artifactoryVersion
-        def vers = ver.split('\\.')
-        def maj = vers[0] as int
-        def min = vers[1] as int
-        if (cver == null || cmaj > maj || (cmaj == maj && cmin > min)) {
-            cver = ver
-            crev = serv.artifactoryRevision
-            cmaj = maj
-            cmin = min
-        }
-    }
-    return new VersionInfo(cver, "$crev")
+    return sserv.allArtifactoryServers*.artifactoryVersion
 }
 
 def remoteCall(whoami, baseurl, auth, method, data = wrapData('jo', null)) {
@@ -403,8 +392,7 @@ def findBestGolden(upList, whoami, auth) {
 
 def sendSlavesGoldenCopy(upList, whoami, auth, mergedPatch, golden) {
     def fingerprint = [cs: null, ts: System.currentTimeMillis()]
-    def ver = getArtifactoryVersion()
-    fingerprint.version = [ver.version, ver.revision]
+    fingerprint.version = getArtifactoryVersion()
     if (golden.fingerprint && fingerprint.ts <= golden.fingerprint.ts) {
         fingerprint.ts = 1 + golden.fingerprint.ts
     }
@@ -476,8 +464,7 @@ def grabStuffFromSlaves(mygolden, upList, whoami, auth) {
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve')
         } else {
             if (golden.fingerprint == null) golden.fingerprint = [:]
-            def ver = getArtifactoryVersion()
-            golden.fingerprint.version = [ver.version, ver.revision]
+            golden.fingerprint.version = getArtifactoryVersion()
             resp = remoteCall(whoami, inst.key, auth, 'data_retrieve', data)
         }
         if (resp[1] != 200) {
@@ -570,8 +557,7 @@ def getPingAndFingerprint() {
     try {
         is = readFile('fingerprint')
         def fingerprint = is ? unwrapData('jo', is) : [:]
-        def ver = getArtifactoryVersion()
-        fingerprint.version = [ver.version, ver.revision]
+        fingerprint.version = getArtifactoryVersion()
         return [wrapData('jo', fingerprint), 200]
     } finally {
         if (is) unwrapData('ji', is).close()
@@ -607,7 +593,7 @@ def getRecentPatch(newgolden) {
         def mergeddiff = merge([goldendiff, extractdiff])
         extracted = applyDiff(baseSnapShot, mergeddiff)
         updateDatabase(null, extracted)
-        newgoldenuw.fingerprint.version = [ver.version, ver.revision]
+        newgoldenuw.fingerprint.version = ver
         writeFile('fingerprint', wrapData('jo', newgoldenuw.fingerprint))
         writeFile('golden', wrapData('jo', goldenDB))
     }
@@ -657,7 +643,7 @@ def applyAggregatePatch(newpatch) {
         log.debug("SLAVE: new slave Golden is $goldenDB")
     }
     patch.fingerprint.cs = getHash(goldenDB)
-    patch.fingerprint.version = [ver.version, ver.revision]
+    patch.fingerprint.version = ver
     writeFile('fingerprint', wrapData('jo', patch.fingerprint))
     writeFile('golden', wrapData('jo', goldenDB))
     is = null
