@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.6
+// v1.1.7
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -1366,10 +1366,25 @@ def applyDiff(oldver, ptch) {
     return patch([], ptch.sort(diffsort), normalize(oldver))
 }
 
+def updatePasswords(snapshot) {
+    for (user in snapshot.users.values()) {
+        def pass = user.password, salt = user.salt
+        if (salt != null && pass ==~ '[a-f0-9]{32}') {
+            user.password = 'md5$1$' + salt + '$' + pass
+            user.salt = null
+        }
+    }
+}
+
 def updateDatabase(oldver, newver) {
     // current state of the database (might have changed since oldver)
     def currver = extract()
     if (oldver == null) oldver = currver
+    // update any old passwords if necessary
+    if (compareVersions(ctx.centralConfig.versionInfo.version, 5, 6) >= 0) {
+        updatePasswords(oldver)
+        updatePasswords(newver)
+    }
     // newver from oldver
     def newdiff = buildDiff(oldver, newver)
     // currver from oldver
