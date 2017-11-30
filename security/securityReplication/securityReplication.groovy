@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.8
+// v1.1.9
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -45,7 +45,7 @@ import org.artifactory.util.HttpUtils
 //global variables
 verbose = false
 artHome = ctx.artifactoryHome.haAwareEtcDir
-pluginVersion = "1.0.0"
+pluginVersion = "5.6.2"
 cronExpression = null
 
 //general artifactory plugin execution hook
@@ -468,6 +468,10 @@ jobs {
             log.debug("MASTER: Cannot continue, some instances are incompatible versions")
             return
         }
+        if (checkArtifactoryVersion(ver[0])) {
+            log.error("MASTER: Cannot continue, Artifactory version is too new; please update this plugin")
+            return
+        }
         upList = simplifyFingerprints(upList)
         log.debug("MASTER: Let's do some updates")
         log.debug("MASTER: Getting the golden file")
@@ -525,6 +529,20 @@ def compareVersions(version, major, minor) {
     return (maj != major) ? (maj <=> major) : (min <=> minor)
 }
 
+def checkArtifactoryVersion(version) {
+    def artvers = version.split('\\.')
+    def plugvers = pluginVersion.split('\\.')
+    def artmaj = artvers[0] as int
+    def plugmaj = plugvers[0] as int
+    if (artmaj != plugmaj) return artmaj > plugmaj
+    def artmid = artvers[1] as int
+    def plugmid = plugvers[1] as int
+    if (artmid != plugmid) return artmid > plugmid
+    def artmin = artvers[2] as int
+    def plugmin = plugvers[2] as int
+    return artmin > plugmin
+}
+
 def simplifyFingerprints(upList) {
     return upList.collectEntries { k, v ->
         [k, (v?.cs && v?.ts) ? ['cs': v.cs, 'ts': v.ts] : null]
@@ -542,30 +560,35 @@ def getArtifactoryVersion() {
 def remoteCall(whoami, baseurl, auth, method, data = wrapData('jo', null)) {
     def exurl = "$baseurl/api/plugins/execute"
     def me = whoami == baseurl
-    switch(method) {
-        case 'json':
-            def req = new HttpPut("$exurl/securityReplication")
-            return makeRequest(req, auth, data, "text/plain")
-        case 'plugin':
-            def req = new HttpPut("$baseurl/api/plugins/securityReplication")
-            return makeRequest(req, auth, data, "text/plain")
-        case 'data_send':
-            if (me) return applyAggregatePatch(wrapData('js', unwrapData('js', data)))
-            def req = new HttpPost("$exurl/secRepDataPost")
-            return makeRequest(req, auth, data, "application/json")
-        case 'data_retrieve':
-            if (me) return getRecentPatch(data)
-            def req = new HttpPost("$exurl/secRepDataGet")
-            return makeRequest(req, auth, data, "application/json")
-        case 'recoverySync':
-            if (me) return getGoldenFile()
-            def req = new HttpGet("$exurl/getUserDB")
-            return makeRequest(req, auth)
-        case 'ping':
-            if (me) return getPingAndFingerprint()
-            def req = new HttpGet("$exurl/secRepPing")
-            return makeRequest(req, auth)
-        default: throw new RuntimeException("Invalid method $method")
+    try {
+        switch(method) {
+            case 'json':
+                def req = new HttpPut("$exurl/securityReplication")
+                return makeRequest(req, auth, data, "text/plain")
+            case 'plugin':
+                def req = new HttpPut("$baseurl/api/plugins/securityReplication")
+                return makeRequest(req, auth, data, "text/plain")
+            case 'data_send':
+                def datacp = wrapData('js', unwrapData('js', data))
+                if (me) return applyAggregatePatch(datacp)
+                def req = new HttpPost("$exurl/secRepDataPost")
+                return makeRequest(req, auth, data, "application/json")
+            case 'data_retrieve':
+                if (me) return getRecentPatch(data)
+                def req = new HttpPost("$exurl/secRepDataGet")
+                return makeRequest(req, auth, data, "application/json")
+            case 'recoverySync':
+                if (me) return getGoldenFile()
+                def req = new HttpGet("$exurl/getUserDB")
+                return makeRequest(req, auth)
+            case 'ping':
+                if (me) return getPingAndFingerprint()
+                def req = new HttpGet("$exurl/secRepPing")
+                return makeRequest(req, auth)
+            default: throw new RuntimeException("Invalid method $method")
+        }
+    } catch (Exception ex) {
+        return [wrapData('js', "Exception during call: $ex.message", 500)]
     }
 }
 
@@ -1327,7 +1350,9 @@ def update(ptch) {
             def isgroup = path[0] == 'groups'
             if (!isgroup && path[1] == 'access-admin') continue
             def principal = oper == ':~' ? path[3] : key
-            def acl = infact.copyAcl(secserv.getAcl(principal))
+            def acl = secserv.getAcl(principal)
+            if (acl == null) continue
+            acl = infact.copyAcl(acl)
             def aces = acl.aces
             if (oper == ';+') {
                 def ace = infact.createAce()
@@ -1376,7 +1401,9 @@ def update(ptch) {
                     ace.principal = key
                     ace.group = false
                     ace.mask = makeMask(perm.value)
-                    def acl = infact.copyAcl(secserv.getAcl(perm.key))
+                    def acl = secserv.getAcl(perm.key)
+                    if (acl == null) continue
+                    acl = infact.copyAcl(acl)
                     acl.aces = acl.aces + ace
                     secserv.updateAcl(acl)
                 }
@@ -1399,7 +1426,9 @@ def update(ptch) {
                     ace.principal = key
                     ace.group = true
                     ace.mask = makeMask(perm.value)
-                    def acl = infact.copyAcl(secserv.getAcl(perm.key))
+                    def acl = secserv.getAcl(perm.key)
+                    if (acl == null) continue
+                    acl = infact.copyAcl(acl)
                     acl.aces = acl.aces + ace
                     secserv.updateAcl(acl)
                 }
@@ -1433,10 +1462,14 @@ def update(ptch) {
                    path[0] == 'users' && path[2] == 'groups') {
             if (path[1] == 'access-admin') continue
             // user/group memberships
-            if (oper == ':+') {
-                secserv.addUsersToGroup(key, [path[1]])
-            } else {
-                secserv.removeUsersFromGroup(key, [path[1]])
+            try {
+                if (oper == ':+') {
+                    secserv.addUsersToGroup(key, [path[1]])
+                } else {
+                    secserv.removeUsersFromGroup(key, [path[1]])
+                }
+            } catch (RuntimeException ex) {
+                log.debug("Exception changing group membership: $ex")
             }
         } else if (pathsize == 3 && oper == ':~' && path[0] == 'users') {
             if (path[1] == 'access-admin') continue
