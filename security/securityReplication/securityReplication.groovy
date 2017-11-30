@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.7
+// v1.1.8
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -45,6 +45,8 @@ import org.artifactory.util.HttpUtils
 //global variables
 verbose = false
 artHome = ctx.artifactoryHome.haAwareEtcDir
+pluginVersion = "1.0.0"
+cronExpression = null
 
 //general artifactory plugin execution hook
 executions {
@@ -157,6 +159,256 @@ executions {
         status = 200
         message = "Snapshots cleared successfully"
     }
+
+    secRepValidate(httpMethod: 'GET') { params ->
+        def chain = params?.getAt('chain')?.getAt(0) ?: null
+        log.debug("secRepValidate called with chain=$chain")
+        if (chain == 'node') {
+            message = new JsonBuilder(validateNode()).toString()
+        } else if (chain == 'instance') {
+            message = new JsonBuilder(validateInstance()).toString()
+        } else if (chain == 'mesh') {
+            message = new JsonBuilder(validateMesh()).toString()
+        } else {
+            message = validateResponse(validateMesh())
+        }
+        status = 200
+    }
+}
+
+def validateResponse(data) {
+    def errors = [], json = null, version = null
+    if ('!message' in data) {
+        def error = [:]
+        error.title = 'Error accessing mesh'
+        error.msg = data['!message']
+        def rec = []
+        rec << "Ensure securityReplication.json exists and is correct"
+        error.rec = rec
+        errors << error
+    } else data.each { url, instance ->
+        if (instance['!status'] != 200) {
+            def error = ['instance': url]
+            error.title = 'Error accessing instance'
+            error.msg = instance['!message']
+            error.status = instance['!status']
+            def rec = []
+            rec << "Ensure the instance is running and accessible"
+            rec << "Ensure the plugin is installed and loaded correctly"
+            error.rec = rec
+            errors << error
+        } else instance.each { id, node ->
+            if (id.startsWith('!')) return
+            if (node['!status'] != 200 || node['!state'] != 'Running') {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Error accessing node'
+                error.msg = node['!message']
+                error.status = node['!status'] + ' (' + node['!state'] + ')'
+                def rec = []
+                rec << "Ensure the node is running and accessible"
+                rec << "Ensure the plugin is installed and loaded correctly"
+                error.rec = rec
+                errors << error
+                return
+            }
+            if (!node.fsversion || node.fsversionerr) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Error reading plugin version from groovy file'
+                error.msg = node.fsversionerr
+                def rec = []
+                rec << "Ensure the plugin is installed and loaded correctly"
+                rec << "Ensure the correct version of the plugin is installed"
+                error.rec = rec
+                errors << error
+            } else if (node.fsversion != node.version) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Loaded plugin version mismatch'
+                error.msg = "Loaded plugin version '$node.version' does not"
+                error.msg += " match groovy file verson '$node.fsversion'"
+                def rec = []
+                rec << "Run a plugin reload on the node"
+                rec << "Ensure the plugin is installed and loaded correctly"
+                rec << "Restart the Artifactory service on the node"
+                error.rec = rec
+                errors << error
+            }
+            if (!version) version = node.fsversion
+            if (version != node.fsversion) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Plugin version mismatch'
+                error.msg = "Plugin version '$node.fsversion' does not match"
+                error.msg += " expected version '$version'"
+                def rec = []
+                rec << "Ensure the correct version of the plugin is installed"
+                error.rec = rec
+                errors << error
+            }
+            if (!node.json || node.jsonerr) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Error reading plugin config from json file'
+                error.msg = node.jsonerr
+                def rec = []
+                rec << "Ensure the correct config file is installed"
+                error.rec = rec
+                errors << error
+                return
+            }
+            def myjson = node.json
+            def whoami = null
+            if (myjson?.securityReplication?.whoami) {
+                whoami = myjson.securityReplication.whoami
+                myjson.securityReplication.whoami = null
+            }
+            if (!json) json = myjson
+            if (myjson != json || whoami != url) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Plugin config mismatch'
+                error.msg = "Plugin config does not match expected config:\n"
+                node.json.whoami = whoami
+                json.whoami = whoami
+                error.msg += "Plugin config:   "
+                error.msg += new JsonBuilder(node.json).toPrettyString()
+                error.msg += "\nExpected config: "
+                error.msg += new JsonBuilder(json).toPrettyString()
+                node.json.whoami = null
+                json.whoami = null
+                def rec = []
+                rec << "Ensure the correct config file is installed"
+                error.rec = rec
+                errors << error
+            }
+            if (node.cron != myjson.securityReplication.cron_job) {
+                def error = ['instance': url, 'node': id]
+                error.title = 'Loaded plugin config mismatch'
+                error.msg = "Loaded plugin cron expression '$node.cron' does"
+                error.msg += " not match configured cron expression"
+                error.msg += " '$myjson.securityReplication.cron_job'"
+                def rec = []
+                rec << "Run a plugin reload on the node"
+                rec << "Ensure the plugin is installed and loaded correctly"
+                rec << "Restart the Artifactory service on the node"
+                error.rec = rec
+                errors << error
+            }
+        }
+    }
+    def status = new StringBuilder('==== ')
+    if (errors.size() > 0) {
+        status << 'Failure: ' << errors.size() << ' errors ====\n'
+    } else {
+        status << 'Success! All nodes synced with securityReplication version '
+        status << version << ' ====\n'
+    }
+    for (err in errors) {
+        status << '#### ' << err.title << ':'
+        if (err.instance) {
+            status << ' ' << err.instance
+            if (err.node) status << ' - ' << err.node
+            if (err.status) status << ' | ' << err.status
+        }
+        def msg = err.msg.replaceAll(/(?m)^/, '        ')
+        status << '\n' << msg << '\n    Recommended Actions:\n'
+        for (rec in err.rec) status << '     - ' << rec << '\n'
+    }
+    return status.toString()
+}
+
+def validateMesh() {
+    log.debug("validating mesh ...")
+    def slurped = null
+    def targetFile = new File(artHome, "/plugins/securityReplication.json")
+    try {
+        slurped = new JsonSlurper().parse(targetFile)
+    } catch (JsonException ex) {
+        def msg = "Cannot read urls from securityReplication.json: $ex"
+        return ['!message': msg]
+    }
+    def username = slurped.securityReplication.authorization.username
+    def password = slurped.securityReplication.authorization.password
+    def encoded = "$username:$password".getBytes().encodeBase64().toString()
+    def auth = "Basic $encoded"
+    def instances = [:]
+    def urls = slurped.securityReplication.urls.unique().reverse()
+    while (urls) {
+        def url = urls.pop()
+        instances[url] = validateRequest(url, auth, 'instance')
+        for (serv in instances[url].entrySet()) {
+            if (serv.key.startsWith('!')) continue
+            for (link in serv.value?.json?.securityReplication?.urls) {
+                if (!(link in urls) && !(link in instances)) urls << link
+            }
+        }
+    }
+    log.debug("mesh validation data fetched: $instances")
+    return instances
+}
+
+def validateInstance() {
+    log.debug("validating instance ...")
+    def servs = [:]
+    def tctx = RequestThreadLocal.context.get().requestThreadLocal
+    def auth = tctx.request.getHeader('Authorization')
+    def sserv = ctx.beanForType(ArtifactoryServersCommonService)
+    def me = sserv.currentMember
+    for (serv in sserv.allArtifactoryServers) {
+        def node = null
+        if (serv == me) {
+            node = validateNode()
+            node['!status'] = 200
+        } else node = validateRequest(serv.contextUrl, auth, 'node')
+        node['!state'] = serv.serverState.prettyName
+        servs[serv.serverId] = node
+    }
+    log.debug("instance validation data fetched: $servs")
+    return servs
+}
+
+def validateNode() {
+    log.debug("validating node ...")
+    def data = ['version': pluginVersion, 'cron': cronExpression]
+    def configfile = new File(artHome, "/plugins/securityReplication.json")
+    try {
+        data['json'] = new JsonSlurper().parse(configfile)
+    } catch (JsonException ex) {
+        data['jsonerr'] = "Cannot read securityReplication.json: $ex"
+    }
+    def pluginfile = new File(artHome, "/plugins/securityReplication.groovy")
+    try {
+        def version = null
+        pluginfile.eachLine {
+            if (version || !it.startsWith("pluginVersion = \"")) return
+            def match = it =~ '^pluginVersion = "(.*)"$'
+            if (match.size() <= 0) return
+            version = match[0][1]
+        }
+        if (version) data['fsversion'] = version
+        else data['fsversionerr'] = "Cannot find version string in plugin file."
+    } catch (Exception ex) {
+        data['fsversionerr'] = "Cannot read securityReplication.groovy: $ex"
+    }
+    log.debug("node validation data fetched: $data")
+    return data
+}
+
+def validateRequest(baseurl, auth, chain) {
+    def resp = null, result = [:]
+    def url = (baseurl - ~'/$') + '/api/plugins/execute/secRepValidate'
+    url += '?params=chain=' + chain
+    try {
+        resp = makeRequest(new HttpGet(url), auth)
+    } catch (Exception ex) {
+        def msg = "Problem making request: $ex"
+        resp = [wrapData('js', msg), -1]
+    }
+    try {
+        if (resp[1] == 200) result = unwrapData('jo', resp[0])
+        else result['!message'] = unwrapData('js', resp[0])
+    } catch (Exception ex) {
+        def msg = "Problem parsing response data: $ex"
+        resp = [wrapData('js', msg), -1]
+    }
+    result['!status'] = resp[1]
+    return result
 }
 
 def getCronJob() {
@@ -167,14 +419,17 @@ def getCronJob() {
         slurped = new JsonSlurper().parse(jsonFile)
     } catch (JsonException ex) {
         log.error("ALL: problem getting $jsonFile, using default")
+        cronExpression = defaultcron
         return defaultcron
     }
     def cron_job = slurped?.securityReplication?.cron_job
     if (cron_job) {
         log.debug("ALL: config cron job is being set at: $cron_job")
+        cronExpression = cron_job
         return cron_job
     }  else {
         log.debug("ALL: cron job is not configured, using default")
+        cronExpression = defaultcron
         return defaultcron
     }
 }
