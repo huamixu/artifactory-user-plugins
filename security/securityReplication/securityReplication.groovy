@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// v1.1.9
+// v1.1.10
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonException
@@ -195,6 +195,8 @@ def validateResponse(data) {
             def rec = []
             rec << "Ensure the instance is running and accessible"
             rec << "Ensure the plugin is installed and loaded correctly"
+            rec << "Try reloading or reinstalling the plugin"
+            rec << "Try restarting the Artifactory service on the instance"
             error.rec = rec
             errors << error
         } else instance.each { id, node ->
@@ -207,6 +209,8 @@ def validateResponse(data) {
                 def rec = []
                 rec << "Ensure the node is running and accessible"
                 rec << "Ensure the plugin is installed and loaded correctly"
+                rec << "Try reloading or reinstalling the plugin"
+                rec << "Try restarting the Artifactory service on the node"
                 error.rec = rec
                 errors << error
                 return
@@ -218,6 +222,7 @@ def validateResponse(data) {
                 def rec = []
                 rec << "Ensure the plugin is installed and loaded correctly"
                 rec << "Ensure the correct version of the plugin is installed"
+                rec << "Try reinstalling the plugin"
                 error.rec = rec
                 errors << error
             } else if (node.fsversion != node.version) {
@@ -228,7 +233,7 @@ def validateResponse(data) {
                 def rec = []
                 rec << "Run a plugin reload on the node"
                 rec << "Ensure the plugin is installed and loaded correctly"
-                rec << "Restart the Artifactory service on the node"
+                rec << "Try restarting the Artifactory service on the node"
                 error.rec = rec
                 errors << error
             }
@@ -240,6 +245,7 @@ def validateResponse(data) {
                 error.msg += " expected version '$version'"
                 def rec = []
                 rec << "Ensure the correct version of the plugin is installed"
+                rec << "Try reinstalling the plugin"
                 error.rec = rec
                 errors << error
             }
@@ -248,7 +254,8 @@ def validateResponse(data) {
                 error.title = 'Error reading plugin config from json file'
                 error.msg = node.jsonerr
                 def rec = []
-                rec << "Ensure the correct config file is installed"
+                rec << "Ensure the config file is installed and is correct"
+                rec << "Try reinstalling the config file on the node"
                 error.rec = rec
                 errors << error
                 return
@@ -264,16 +271,17 @@ def validateResponse(data) {
                 def error = ['instance': url, 'node': id]
                 error.title = 'Plugin config mismatch'
                 error.msg = "Plugin config does not match expected config:\n"
-                node.json.whoami = whoami
-                json.whoami = whoami
-                error.msg += "Plugin config:   "
+                node.json.securityReplication.whoami = whoami
+                json.securityReplication.whoami = whoami
+                error.msg += "Plugin config: "
                 error.msg += new JsonBuilder(node.json).toPrettyString()
                 error.msg += "\nExpected config: "
                 error.msg += new JsonBuilder(json).toPrettyString()
-                node.json.whoami = null
-                json.whoami = null
+                node.json.securityReplication.whoami = null
+                json.securityReplication.whoami = null
                 def rec = []
-                rec << "Ensure the correct config file is installed"
+                rec << "Ensure the config file is installed and is correct"
+                rec << "Try reinstalling the config file on the node"
                 error.rec = rec
                 errors << error
             }
@@ -286,7 +294,7 @@ def validateResponse(data) {
                 def rec = []
                 rec << "Run a plugin reload on the node"
                 rec << "Ensure the plugin is installed and loaded correctly"
-                rec << "Restart the Artifactory service on the node"
+                rec << "Try restarting the Artifactory service on the node"
                 error.rec = rec
                 errors << error
             }
@@ -328,14 +336,16 @@ def validateMesh() {
     def encoded = "$username:$password".getBytes().encodeBase64().toString()
     def auth = "Basic $encoded"
     def instances = [:]
-    def urls = slurped.securityReplication.urls.unique().reverse()
+    def urls = slurped.securityReplication.urls.reverse().unique()
     while (urls) {
         def url = urls.pop()
         instances[url] = validateRequest(url, auth, 'instance')
-        for (serv in instances[url].entrySet()) {
+        for (serv in (instances[url].entrySet() as List).reverse()) {
             if (serv.key.startsWith('!')) continue
-            for (link in serv.value?.json?.securityReplication?.urls) {
-                if (!(link in urls) && !(link in instances)) urls << link
+            for (link in serv.value?.json?.securityReplication?.urls?.reverse()) {
+                if (!(link in urls) && !(link in instances) && (link != url)) {
+                    urls << link
+                }
             }
         }
     }
@@ -375,11 +385,16 @@ def validateNode() {
     def pluginfile = new File(artHome, "/plugins/securityReplication.groovy")
     try {
         def version = null
-        pluginfile.eachLine {
-            if (version || !it.startsWith("pluginVersion = \"")) return
-            def match = it =~ '^pluginVersion = "(.*)"$'
-            if (match.size() <= 0) return
-            version = match[0][1]
+        try {
+            pluginfile.eachLine {
+                if (!it.startsWith("pluginVersion = \"")) return
+                def match = it =~ '^pluginVersion = "(.*)"$'
+                if (match.size() <= 0) return
+                version = match[0][1]
+                throw new RuntimeException('<terminating early>')
+            }
+        } catch (RuntimeException ex) {
+            if (ex.message != '<terminating early>') throw ex
         }
         if (version) data['fsversion'] = version
         else data['fsversionerr'] = "Cannot find version string in plugin file."
@@ -468,7 +483,7 @@ jobs {
             log.debug("MASTER: Cannot continue, some instances are incompatible versions")
             return
         }
-        if (checkArtifactoryVersion(ver[0])) {
+        if (slurped.securityReplication.safety != 'off' && checkArtifactoryVersion(ver[0])) {
             log.error("MASTER: Cannot continue, Artifactory version is too new; please update this plugin")
             return
         }
