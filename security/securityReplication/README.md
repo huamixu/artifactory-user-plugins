@@ -168,7 +168,7 @@ required. To easily identify and rectify these cases, and to ensure proper
 deployment of this plugin in general, the `secRepValidate` endpoint can be used:
 
 ``` shell
-curl -uadmin:password -XPOST http://localhost:8088/artifactory/api/plugins/execute/secRepValidate
+curl -uadmin:password -XGET http://localhost:8088/artifactory/api/plugins/execute/secRepValidate
 ```
 
 This endpoint checks every node in the mesh and ensures that they all have
