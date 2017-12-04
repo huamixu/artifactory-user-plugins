@@ -70,11 +70,13 @@ The following steps should be taken when upgrading:
   that all nodes are in a fully synchronized state when replication resumes.
 
 Starting with Artifactory 5.6, this plugin is not forward-compatible with newer
-versions of Artifactory, and any upgrade to Artifactory will require an update
-to this plugin, or else replication will not run. This is a safety measure to
-prevent accidental data loss, in case of future incompatibilities like the
-changes in Artifactory 5.6. Newer versions of the plugin will continue to work
-on older versions of Artifactory.
+versions of Artifactory by default, and any upgrade to Artifactory will require
+an update to this plugin, or else replication will not run. This is a safety
+measure to prevent accidental data loss, in case of future incompatibilities
+like the changes in Artifactory 5.6. Newer versions of the plugin will continue
+to work on older versions of Artifactory. You may disable this behavior by
+adding a `"safety": "off"` entry to the configuration file (described
+[below](#configuration)), but this is not recommended.
 
 Configuration
 -------------
