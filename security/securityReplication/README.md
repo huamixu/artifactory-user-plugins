@@ -62,7 +62,8 @@ The following steps should be taken when upgrading:
    the mesh are the correct version and that the plugin is still active.
 
 - When upgrading an HA cluster to Artifactory 5.6, do not modify any security
-  data until all nodes in the cluster are upgraded, as such changes may be lost.
+  data (such as adding or modifying groups, users or security permissions)
+  until all nodes in the cluster are upgraded, as such changes may be lost.
 - When upgrading a securityReplication mesh, it is recommended to not introduce
   new Artifactory instances to the mesh until all existing instances are
   upgraded and replication has resumed. It is also recommended to ensure that
