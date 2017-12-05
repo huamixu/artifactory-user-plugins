@@ -111,7 +111,7 @@ Setup
 -----
 
 Ensure you have an admin user that has the same login and password across your
-entire mesh.
+entire mesh, and that password encryption policy in the general security settings of the security configuration page of the admin tab is set to 'OPTIONAL'.
 
 Write a configuration file using the fields above. For example:
 
@@ -217,7 +217,7 @@ curl -u<REPLICATION USER>:<API KEY> -XPOST http://localhost:8088/artifactory/api
 ```
 
 Now your security replication is using an API key instead of a plaintext
-password.
+password, and you may now set your password encryption policy in the general security settings of the security configuration page of the admin tab to 'REQUIRED'
 
 Removing the Plugin
 -------------------
